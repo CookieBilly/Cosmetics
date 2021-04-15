@@ -1,0 +1,407 @@
+
+
+package ws.billy.CookieGadgets.nms.v1_9_R2.pets.entity;
+
+import net.minecraft.server.v1_9_R2.NBTTagCompound;
+import net.minecraft.server.v1_9_R2.DamageSource;
+import ws.billy.CookieGadgets.nms.v1_9_R2.pets.CraftNMSCreature;
+import ws.billy.CookieGadgets.CookieGadgets;
+import net.minecraft.server.v1_9_R2.SoundEffect;
+import org.bukkit.block.BlockFace;
+import net.minecraft.server.v1_9_R2.MathHelper;
+import net.minecraft.server.v1_9_R2.PacketPlayOutEntityTeleport;
+import org.bukkit.event.player.PlayerTeleportEvent;
+import org.bukkit.event.Event;
+import ws.billy.CookieGadgets.api.event.pets.PetMoveEvent;
+import org.bukkit.Bukkit;
+import ws.billy.CookieGadgets.utils.cosmetics.pets.entity.types.IEntityHorsePet;
+import java.util.Iterator;
+import net.minecraft.server.v1_9_R2.EntityPlayer;
+import org.bukkit.entity.Player;
+import ws.billy.CookieGadgets.utils.cosmetics.pets.entity.IFlyablePet;
+import org.bukkit.Location;
+import net.minecraft.server.v1_9_R2.EnumItemSlot;
+import org.bukkit.craftbukkit.v1_9_R2.inventory.CraftItemStack;
+import org.bukkit.inventory.ItemStack;
+import ws.billy.CookieGadgets.utils.EnumArmorType;
+import net.minecraft.server.v1_9_R2.Packet;
+import net.minecraft.server.v1_9_R2.PacketPlayOutMount;
+import org.bukkit.craftbukkit.v1_9_R2.entity.CraftPlayer;
+import org.bukkit.craftbukkit.v1_9_R2.entity.CraftCreature;
+import org.bukkit.craftbukkit.v1_9_R2.entity.CraftEntity;
+import ws.billy.CookieGadgets.utils.cosmetics.pets.entity.EntitySize;
+import ws.billy.CookieGadgets.utils.cosmetics.pets.GEntity;
+import org.bukkit.entity.Entity;
+import net.minecraft.server.v1_9_R2.GenericAttributes;
+import net.minecraft.server.v1_9_R2.EntityLiving;
+import net.minecraft.server.v1_9_R2.World;
+import java.lang.reflect.Field;
+import ws.billy.CookieGadgets.utils.cosmetics.pets.entity.IPet;
+import ws.billy.CookieGadgets.nms.interfaces.pets.NMSPet;
+import ws.billy.CookieGadgets.utils.cosmetics.pets.entity.IEntityPet;
+import net.minecraft.server.v1_9_R2.IAnimal;
+import net.minecraft.server.v1_9_R2.EntityCreature;
+
+public abstract class EntityPet extends EntityCreature implements IAnimal, IEntityPet, NMSPet
+{
+    private IPet pet;
+    private double moveSpeed;
+    private double rideSpeed;
+    private boolean floatDown;
+    protected Field JUMP_FIELD;
+    
+    public EntityPet(final World world) {
+        super(world);
+        this.JUMP_FIELD = null;
+    }
+    
+    public EntityPet(final World world, final IPet pet) {
+        super(world);
+        this.JUMP_FIELD = null;
+        this.pet = pet;
+        this.collides = false;
+        this.resetEntitySize();
+        if (this.JUMP_FIELD == null) {
+            try {
+                (this.JUMP_FIELD = EntityLiving.class.getDeclaredField("bd")).setAccessible(true);
+            }
+            catch (NoSuchFieldException ex) {
+                ex.printStackTrace();
+            }
+        }
+        this.getAttributeInstance(GenericAttributes.maxHealth).setValue(20.0);
+        this.moveSpeed = pet.getType().getEntityType().getMoveSpeed();
+        this.rideSpeed = pet.getType().getEntityType().getRideSpeed();
+        this.floatDown = pet.getType().getEntityPet().canFloat();
+    }
+    
+    public IPet getPet() {
+        return this.pet;
+    }
+    
+    public Entity getEntity() {
+        return (Entity)super.getBukkitEntity();
+    }
+    
+    public GEntity getGEntity() {
+        return this.pet.getType().getEntityType().getGEntity();
+    }
+    
+    public void resetEntitySize() {
+        final EntitySize entitySize = this.getClass().getAnnotation(EntitySize.class);
+        if (entitySize != null) {
+            this.setSize(entitySize.width(), entitySize.height());
+        }
+    }
+    
+    public void resetEntitySize(final boolean b) {
+        final EntitySize entitySize = this.getClass().getAnnotation(EntitySize.class);
+        if (entitySize != null) {
+            this.setSize(b ? (entitySize.width() / 2.0f) : entitySize.width(), b ? (entitySize.height() / 2.0f) : entitySize.height());
+        }
+    }
+    
+    public void setEntitySize(final float n, final float n2) {
+        this.setSize(n, n2);
+    }
+    
+    public void setCustomNameNMS(final String customName) {
+        if (!super.getCustomNameVisible()) {
+            super.setCustomNameVisible(true);
+        }
+        super.setCustomName(customName);
+    }
+    
+    public String getCustomNameNMS() {
+        return super.getCustomName();
+    }
+    
+    public void setOwnerRidePetNMS() {
+        if (this.pet == null || this.pet.getOwner() == null || !this.pet.getOwner().isOnline()) {
+            return;
+        }
+        if (this.pet.getOwner() instanceof CraftEntity) {
+            this.removePassengerNMS();
+            ((CraftEntity)this.pet.getOwner()).getHandle().startRiding(((CraftEntity)this.getBukkitEntity()).getHandle());
+        }
+    }
+    
+    public void removePassengerNMS() {
+        final CraftCreature bukkitEntity = this.getBukkitEntity();
+        if (!((CraftEntity)bukkitEntity).getHandle().isVehicle()) {
+            return;
+        }
+        ((CraftEntity)bukkitEntity).getPassenger().leaveVehicle();
+    }
+    
+    public void setAsHatNMS() {
+        if (this.pet == null || this.pet.getOwner() == null || !this.pet.getOwner().isOnline()) {
+            return;
+        }
+        final CraftCreature bukkitEntity = this.getBukkitEntity();
+        final CraftPlayer craftPlayer = (CraftPlayer)this.pet.getOwner();
+        this.removeHatNMS();
+        craftPlayer.getHandle().passengers.add(0, ((CraftEntity)bukkitEntity).getHandle());
+        craftPlayer.getHandle().playerConnection.sendPacket((Packet)new PacketPlayOutMount((net.minecraft.server.v1_9_R2.Entity)craftPlayer.getHandle()));
+    }
+    
+    public void removeHatNMS() {
+        if (this.pet == null || this.pet.getOwner() == null || !this.pet.getOwner().isOnline()) {
+            return;
+        }
+        final CraftPlayer craftPlayer = (CraftPlayer)this.pet.getOwner();
+        craftPlayer.getHandle().passengers.clear();
+        craftPlayer.getHandle().playerConnection.sendPacket((Packet)new PacketPlayOutMount((net.minecraft.server.v1_9_R2.Entity)craftPlayer.getHandle()));
+    }
+    
+    public boolean isDeadNMS() {
+        return super.dead;
+    }
+    
+    public void killEntityNMS() {
+        super.dead = true;
+    }
+    
+    public void setSilentNMS(final boolean b) {
+    }
+    
+    public boolean isSilentNMS() {
+        return false;
+    }
+    
+    public void setEquipmentNMS(final EnumArmorType enumArmorType, final ItemStack itemStack) {
+        final net.minecraft.server.v1_9_R2.ItemStack nmsCopy = CraftItemStack.asNMSCopy(itemStack);
+        switch (enumArmorType) {
+            case HELMET: {
+                super.setSlot(EnumItemSlot.HEAD, nmsCopy);
+                break;
+            }
+            case CHESTPLATE: {
+                super.setSlot(EnumItemSlot.CHEST, nmsCopy);
+                break;
+            }
+            case LEGGINGS: {
+                super.setSlot(EnumItemSlot.LEGS, nmsCopy);
+                break;
+            }
+            case BOOTS: {
+                super.setSlot(EnumItemSlot.FEET, nmsCopy);
+                break;
+            }
+        }
+    }
+    
+    public void teleportNMS(final Location location) {
+        super.setPosition(location.getX(), location.getY(), location.getZ());
+        this.yaw = location.getYaw();
+        this.pitch = location.getPitch();
+    }
+    
+    public NMSPet getEntityNMS() {
+        return this;
+    }
+    
+    protected void i() {
+        super.i();
+        this.initDatawatchers();
+    }
+    
+    protected void initDatawatchers() {
+    }
+    
+    public void m() {
+        super.m();
+        this.repeatTask();
+    }
+    
+    public void repeatTask() {
+        if (this.pet == null) {
+            this.killEntityNMS();
+            return;
+        }
+        if (this.pet.getOwner() == null || !this.pet.getOwner().isOnline()) {
+            this.killEntityNMS();
+            return;
+        }
+        if (this instanceof IFlyablePet && this.pet.isOwnerRiding() && this.floatDown && !this.onGround && this.motY < 0.0) {
+            this.motY *= 0.4;
+        }
+        final Player owner = this.pet.getOwner();
+        if (this.pet.isHat()) {
+            final float yaw = owner.getLocation().getYaw();
+            this.yaw = yaw;
+            this.lastYaw = yaw;
+        }
+        final double value = this.getAttributeInstance(GenericAttributes.MOVEMENT_SPEED).getValue();
+        if (this.isOwnerRiding()) {
+            if (value != this.rideSpeed) {
+                this.getAttributeInstance(GenericAttributes.MOVEMENT_SPEED).setValue(this.rideSpeed);
+            }
+        }
+        else if (value != this.moveSpeed) {
+            this.getAttributeInstance(GenericAttributes.MOVEMENT_SPEED).setValue(this.moveSpeed);
+        }
+    }
+    
+    protected boolean isOwnerRiding() {
+        if (this.passengers.size() == 0) {
+            return false;
+        }
+        final EntityPlayer handle = ((CraftPlayer)this.pet.getOwner()).getHandle();
+        final Iterator<net.minecraft.server.v1_9_R2.Entity> iterator = this.passengers.iterator();
+        while (iterator.hasNext()) {
+            if (iterator.next().getUniqueID().equals(handle.getUniqueID())) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    public void g(float n, float bf) {
+        if (this.pet.getOwner() == null) {
+            return;
+        }
+        if (this.pet == null || !this.isOwnerRiding()) {
+            this.P = 0.5f;
+            super.g(n, bf);
+            return;
+        }
+        final EntityPlayer handle = ((CraftPlayer)this.pet.getOwner()).getHandle();
+        this.yaw = handle.yaw;
+        this.lastYaw = this.yaw;
+        this.pitch = handle.pitch * 0.5f;
+        this.setYawPitch(this.yaw, this.pitch);
+        final float yaw = this.yaw;
+        this.aN = yaw;
+        this.aP = yaw;
+        this.P = 1.0f;
+        n = handle.be * 0.5f;
+        bf = handle.bf;
+        if (bf <= 0.0f) {
+            bf *= (float)(0.25 * this.rideSpeed);
+        }
+        else {
+            bf *= (float)this.rideSpeed;
+        }
+        if (!(this instanceof IEntityHorsePet)) {
+            n *= 0.75f;
+        }
+        this.l((float)this.rideSpeed);
+        if (!this.world.isClientSide) {
+            Bukkit.getServer().getPluginManager().callEvent((Event)new PetMoveEvent(this, PetMoveEvent.Cause.RIDE));
+            final Location location = new Location((org.bukkit.World)this.world.getWorld(), this.lastX, this.lastY, this.lastZ, this.lastYaw, this.lastPitch);
+            super.g(n, bf);
+            Bukkit.getServer().getPluginManager().callEvent((Event)new PlayerTeleportEvent((Player)handle.getBukkitEntity(), location, new Location((org.bukkit.World)this.world.getWorld(), this.locX, this.locY, this.locZ, this.yaw, this.pitch)));
+            if (this instanceof IEntityHorsePet) {
+                final Location location2 = this.getBukkitEntity().getLocation();
+                this.setPosition(location2.getX(), location2.getY(), location2.getZ());
+                handle.playerConnection.sendPacket((Packet)new PacketPlayOutEntityTeleport((net.minecraft.server.v1_9_R2.Entity)this));
+                if (bf > 0.0f) {
+                    final float sin = MathHelper.sin(this.yaw * 0.017453292f);
+                    final float cos = MathHelper.cos(this.yaw * 0.017453292f);
+                    this.motX += -0.4f * sin * 0.0f;
+                    this.motZ += 0.4f * cos * 0.0f;
+                }
+            }
+        }
+        if (this.JUMP_FIELD != null) {
+            if (!this.isOnGround((net.minecraft.server.v1_9_R2.Entity)this) && this.pet.getType().getEntityPet().canFly()) {
+                try {
+                    if (this.pet.getOwner().isFlying()) {
+                        this.pet.getOwner().setFlying(false);
+                    }
+                    if (this.JUMP_FIELD.getBoolean(handle)) {
+                        this.motY = 0.5;
+                    }
+                }
+                catch (Exception ex) {
+                    ex.printStackTrace();
+                }
+            }
+            else if (this.isOnGround((net.minecraft.server.v1_9_R2.Entity)this)) {
+                try {
+                    if (this.JUMP_FIELD.getBoolean(handle)) {
+                        this.motY = 0.3;
+                    }
+                }
+                catch (IllegalAccessException ex2) {
+                    ex2.printStackTrace();
+                }
+            }
+        }
+    }
+    
+    protected boolean isOnGround(final net.minecraft.server.v1_9_R2.Entity entity) {
+        return entity.getBukkitEntity().getLocation().getBlock().getRelative(BlockFace.DOWN).getType().isSolid();
+    }
+    
+    protected SoundEffect G() {
+        if (this.pet == null || CookieGadgets.getPetData().isPetSilent()) {
+            return null;
+        }
+        final ws.billy.CookieGadgets.utils.SoundEffect ambientSound = this.pet.getType().getEntityPet().getAmbientSound();
+        if (ambientSound != null) {
+            ambientSound.playSound(this.getEntity());
+        }
+        return null;
+    }
+    
+    public CraftCreature getBukkitEntity() {
+        if (super.bukkitEntity == null) {
+            super.bukkitEntity = (CraftEntity)new CraftNMSCreature(super.world.getServer(), this);
+        }
+        return (CraftCreature)super.getBukkitEntity();
+    }
+    
+    public boolean isInvulnerable(final DamageSource damageSource) {
+        return true;
+    }
+    
+    public boolean isCollidable() {
+        return false;
+    }
+    
+    public void setCustomName(final String s) {
+    }
+    
+    public void setCustomNameVisible(final boolean b) {
+    }
+    
+    public boolean c(final int n, final net.minecraft.server.v1_9_R2.ItemStack itemStack) {
+        return false;
+    }
+    
+    public void setSlot(final EnumItemSlot enumItemSlot, final net.minecraft.server.v1_9_R2.ItemStack itemStack) {
+    }
+    
+    public void die() {
+    }
+    
+    public boolean damageEntity(final DamageSource damageSource, final float n) {
+        return false;
+    }
+    
+    public void setInvisible(final boolean b) {
+    }
+    
+    public void a(final NBTTagCompound nbtTagCompound) {
+    }
+    
+    public void b(final NBTTagCompound nbtTagCompound) {
+    }
+    
+    public boolean c(final NBTTagCompound nbtTagCompound) {
+        return false;
+    }
+    
+    public boolean d(final NBTTagCompound nbtTagCompound) {
+        return false;
+    }
+    
+    public NBTTagCompound e(final NBTTagCompound nbtTagCompound) {
+        return nbtTagCompound;
+    }
+    
+    public void f(final NBTTagCompound nbtTagCompound) {
+    }
+}
